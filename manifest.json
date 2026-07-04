@@ -1,0 +1,31 @@
+{
+  "id": "codexu",
+  "name": "codexU",
+  "version": "0.1.2",
+  "minNoctaliaVersion": "4.6.6",
+  "author": "RinStel",
+  "license": "MIT",
+  "repository": "https://github.com/RinStel/codexU4N",
+  "description": "Desktop widget for Codex quota, token usage, API-equivalent value, and today's task board.",
+  "tags": ["Desktop", "AI", "Development", "Utility"],
+  "entryPoints": {
+    "desktopWidget": "DesktopWidget.qml",
+    "settings": "Settings.qml"
+  },
+  "dependencies": {
+    "plugins": []
+  },
+  "metadata": {
+    "defaultSettings": {
+      "refreshIntervalSeconds": 120,
+      "codexHome": "",
+      "backgroundOpacity": 0.78,
+      "cardOpacity": 0.56,
+      "showTaskBoard": true,
+      "showMessages": true,
+      "taskWindowDays": 1,
+      "themeMode": "system",
+      "language": "zh"
+    }
+  }
+}
