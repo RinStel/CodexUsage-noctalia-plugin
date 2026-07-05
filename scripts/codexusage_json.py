@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Produce codexU usage JSON for Noctalia and other QML shells."""
+"""Produce CodexUsage JSON for Noctalia and other QML shells."""
 
 from __future__ import annotations
 
@@ -149,7 +149,25 @@ TOKEN_PRICE_TABLE = (
 )
 
 CACHE_VERSION = 1
-APP_SERVER_TIMEOUT_SECONDS = float(os.environ.get("CODEXU_APP_SERVER_TIMEOUT_SECONDS", "5"))
+ENV_APP_SERVER_TIMEOUT_SECONDS = "CODEXUSAGE_APP_SERVER_TIMEOUT_SECONDS"
+ENV_CODEX_HOME = "CODEXUSAGE_CODEX_HOME"
+ENV_TASK_WINDOW_DAYS = "CODEXUSAGE_TASK_WINDOW_DAYS"
+
+MESSAGE_CODEX_NOT_FOUND = "未找到 codex 可执行文件"
+MESSAGE_APP_SERVER_START_FAILED = "app-server 启动失败"
+MESSAGE_APP_SERVER_TIMED_OUT = "app-server 响应超时"
+MESSAGE_STATE_DB_NOT_FOUND = "未找到 Codex state_5.sqlite"
+MESSAGE_SQLITE_QUERY_FAILED = "SQLite 查询失败"
+MESSAGE_SESSION_LOGS_NOT_FOUND = "未找到 Codex session 日志"
+MESSAGE_TOKEN_EVENTS_NOT_FOUND = "未找到 Codex token_count 事件"
+MESSAGE_TASK_BOARD_SQLITE_FAILED = "任务看板 SQLite 查询失败"
+MESSAGE_TASK_BOARD_SOURCE_MISSING = "任务看板未找到 SQLite 数据源"
+
+APP_SERVER_TIMEOUT_SECONDS = float(os.environ.get(ENV_APP_SERVER_TIMEOUT_SECONDS, "5"))
+
+
+def new_rollout_cache() -> dict[str, Any]:
+    return {"version": CACHE_VERSION, "entries": {}}
 
 
 @dataclass
@@ -269,7 +287,7 @@ def find_codex() -> str | None:
 
 
 def codex_home() -> Path:
-    return Path(os.environ.get("CODEXU_CODEX_HOME", Path.home() / ".codex")).expanduser()
+    return Path(os.environ.get(ENV_CODEX_HOME, Path.home() / ".codex")).expanduser()
 
 
 def state_db_path() -> Path | None:
@@ -281,7 +299,7 @@ def state_db_path() -> Path | None:
 
 
 def rollout_cache_path() -> Path:
-    return codex_home() / "cache" / f"codexu-rollout-cache-v{CACHE_VERSION}.json"
+    return codex_home() / "cache" / f"codexusage-rollout-cache-v{CACHE_VERSION}.json"
 
 
 def load_rollout_cache() -> dict[str, Any]:
@@ -289,9 +307,9 @@ def load_rollout_cache() -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return {"version": CACHE_VERSION, "entries": {}}
+        return new_rollout_cache()
     if payload.get("version") != CACHE_VERSION or not isinstance(payload.get("entries"), dict):
-        return {"version": CACHE_VERSION, "entries": {}}
+        return new_rollout_cache()
     return payload
 
 
@@ -391,7 +409,7 @@ def cached_rollout_usage(
 def read_app_server(messages: list[str]) -> dict[str, Any]:
     codex = find_codex()
     if not codex:
-        messages.append("未找到 codex 可执行文件")
+        messages.append(MESSAGE_CODEX_NOT_FOUND)
         return {}
 
     try:
@@ -404,7 +422,7 @@ def read_app_server(messages: list[str]) -> dict[str, Any]:
             bufsize=1,
         )
     except OSError:
-        messages.append("app-server 启动失败")
+        messages.append(MESSAGE_APP_SERVER_START_FAILED)
         return {}
 
     def send(payload: dict[str, Any]) -> None:
@@ -417,7 +435,7 @@ def read_app_server(messages: list[str]) -> dict[str, Any]:
             "id": 1,
             "method": "initialize",
             "params": {
-                "clientInfo": {"name": "codexu-noctalia", "title": "codexU", "version": "0.2.0"},
+                "clientInfo": {"name": "codexusage-noctalia", "title": "CodexUsage", "version": "0.2.0"},
                 "capabilities": {"experimentalApi": True, "optOutNotificationMethods": []},
             },
         }
@@ -466,7 +484,7 @@ def read_app_server(messages: list[str]) -> dict[str, Any]:
             process.kill()
 
     if {2, 3, 4} - completed:
-        messages.append("app-server 响应超时")
+        messages.append(MESSAGE_APP_SERVER_TIMED_OUT)
     return snapshot
 
 
@@ -531,13 +549,13 @@ def connect_db(path: Path) -> sqlite3.Connection:
 def read_local_usage(messages: list[str]) -> dict[str, Any] | None:
     db_path = state_db_path()
     if not db_path:
-        messages.append("未找到 Codex state_5.sqlite")
+        messages.append(MESSAGE_STATE_DB_NOT_FOUND)
         return None
 
     try:
         connection = connect_db(db_path)
     except sqlite3.Error:
-        messages.append("SQLite 查询失败")
+        messages.append(MESSAGE_SQLITE_QUERY_FAILED)
         return None
 
     now = datetime.now().astimezone()
@@ -578,7 +596,7 @@ def read_local_usage(messages: list[str]) -> dict[str, Any] | None:
         ).fetchall()
     except sqlite3.Error:
         connection.close()
-        messages.append("SQLite 查询失败")
+        messages.append(MESSAGE_SQLITE_QUERY_FAILED)
         return None
 
     tokens_by_day = {row["day"]: int(row["tokens"] or 0) for row in daily}
@@ -619,6 +637,9 @@ def read_local_usage(messages: list[str]) -> dict[str, Any] | None:
     }
     if detailed:
         local["detailedUsage"] = detailed
+        local["valueProjection"] = detailed["valueProjection"]
+    else:
+        local["valueProjection"] = monthly_value_projection_object(None)
     return local
 
 
@@ -651,7 +672,7 @@ def read_detailed_usage(
             sources.append((Path(path).expanduser(), row["model"]))
 
     if not sources:
-        messages.append("未找到 Codex session 日志")
+        messages.append(MESSAGE_SESSION_LOGS_NOT_FOUND)
         return None
 
     now = datetime.now().astimezone()
@@ -696,7 +717,7 @@ def read_detailed_usage(
         save_rollout_cache(cache)
 
     if parsed_file_count == 0 or token_event_count == 0:
-        messages.append("未找到 Codex token_count 事件")
+        messages.append(MESSAGE_TOKEN_EVENTS_NOT_FOUND)
         return None
 
     return {
@@ -704,6 +725,7 @@ def read_detailed_usage(
         "sevenDay": priced_usage_object(usage["sevenDay"]),
         "month": priced_usage_object(usage["month"]),
         "lifetime": priced_usage_object(usage["lifetime"]),
+        "valueProjection": monthly_value_projection_object(usage["month"], now),
         "parsedFileCount": parsed_file_count,
         "tokenEventCount": token_event_count,
     }
@@ -767,6 +789,32 @@ def estimated_cost_usd(tokens: TokenBreakdown, pricing: ModelPricing, request_in
     )
 
 
+def next_month_start(value: datetime) -> datetime:
+    if value.month == 12:
+        return value.replace(year=value.year + 1, month=1, day=1, hour=0, minute=0, second=0, microsecond=0)
+    return value.replace(month=value.month + 1, day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+def monthly_value_projection_object(month_usage: PricedUsage | None, now: datetime | None = None) -> dict[str, Any]:
+    current_time = now or datetime.now().astimezone()
+    month_start = current_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    month_end = next_month_start(current_time)
+    month_seconds = max((month_end - month_start).total_seconds(), 1.0)
+    elapsed_seconds = max((current_time - month_start).total_seconds(), 1.0)
+    elapsed_fraction = min(max(elapsed_seconds / month_seconds, 0.0), 1.0)
+
+    current_value = float((month_usage and month_usage.estimated_cost_usd) or 0.0)
+    projected_value = current_value / elapsed_fraction if current_value > 0 and elapsed_fraction > 0 else 0.0
+    return {
+        "currentUSD": current_value,
+        "projectedUSD": projected_value,
+        "elapsedFraction": elapsed_fraction,
+        "monthStart": month_start.isoformat(),
+        "monthEnd": month_end.isoformat(),
+        "source": "monthlyRunRate" if projected_value > 0 else "none",
+    }
+
+
 def priced_usage_object(usage: PricedUsage) -> dict[str, Any]:
     tokens = usage.tokens
     return {
@@ -792,7 +840,7 @@ def read_task_board(messages: list[str]) -> dict[str, Any] | None:
     day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
     active_cutoff = now - timedelta(hours=2)
 
-    window_days = max(1, int(os.environ.get("CODEXU_TASK_WINDOW_DAYS", "1")))
+    window_days = max(1, int(os.environ.get(ENV_TASK_WINDOW_DAYS, "1")))
     window_start = day_start - timedelta(days=window_days - 1)
 
     if db_path:
@@ -830,7 +878,7 @@ def read_task_board(messages: list[str]) -> dict[str, Any] | None:
         except sqlite3.Error:
             today_rows = []
             done_rows = []
-            messages.append("任务看板 SQLite 查询失败")
+            messages.append(MESSAGE_TASK_BOARD_SQLITE_FAILED)
 
         for row in today_rows:
             iso = iso_from_epoch(row["recencyAt"] or row["updatedAt"])
@@ -843,7 +891,7 @@ def read_task_board(messages: list[str]) -> dict[str, Any] | None:
                 pending_items.append(item)
         done_items = [make_thread_task_item(row, "done") for row in done_rows]
     else:
-        messages.append("任务看板未找到 SQLite 数据源")
+        messages.append(MESSAGE_TASK_BOARD_SOURCE_MISSING)
 
     scheduled_items = read_automation_tasks()
     columns = [

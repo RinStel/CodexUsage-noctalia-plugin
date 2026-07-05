@@ -1,13 +1,13 @@
 {
-  "id": "codexu",
-  "name": "codexU",
-  "version": "0.1.2",
+  "id": "codexusage",
+  "name": "CodexUsage",
+  "version": "0.2.0",
   "minNoctaliaVersion": "4.6.6",
   "author": "RinStel",
-  "license": "MIT",
-  "repository": "https://github.com/RinStel/codexU4N",
+  "license": "GLWT",
+  "repository": "https://github.com/RinStel/CodexUsage-noctalia-plugin",
   "description": "Desktop widget for Codex quota, token usage, API-equivalent value, and today's task board.",
-  "tags": ["Desktop", "AI", "Development", "Utility"],
+  "tags": ["Desktop", "Developer Tools", "Codex"],
   "entryPoints": {
     "desktopWidget": "DesktopWidget.qml",
     "settings": "Settings.qml"

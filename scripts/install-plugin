@@ -1,0 +1,27 @@
+#!/usr/bin/env sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+PLUGIN_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+TARGET_DIR=${NOCTALIA_PLUGIN_DIR:-"$HOME/.config/noctalia/plugins/codexusage"}
+
+if ! command -v python3 >/dev/null 2>&1; then
+  cat >&2 <<'EOF'
+CodexUsage Noctalia requires python3 in PATH.
+
+Add it to NixOS or Home Manager, for example:
+
+  environment.systemPackages = with pkgs; [ python3 ];
+
+or:
+
+  home.packages = with pkgs; [ python3 ];
+EOF
+  exit 1
+fi
+
+mkdir -p "$(dirname "$TARGET_DIR")"
+ln -sfn "$PLUGIN_DIR" "$TARGET_DIR"
+"$SCRIPT_DIR/register-plugin-state"
+
+printf '%s\n' "Installed Noctalia plugin link: $TARGET_DIR"

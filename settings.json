@@ -1,0 +1,11 @@
+{
+  "refreshIntervalSeconds": 120,
+  "codexHome": "",
+  "backgroundOpacity": 0.78,
+  "cardOpacity": 0.56,
+  "showTaskBoard": true,
+  "showMessages": true,
+  "taskWindowDays": 1,
+  "themeMode": "system",
+  "language": "zh"
+}
