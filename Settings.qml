@@ -7,6 +7,7 @@ ColumnLayout {
     id: root
 
     property var pluginApi: null
+    property bool saveReady: false
     property var defaults:
         pluginApi && pluginApi.manifest && pluginApi.manifest.metadata
             ? pluginApi.manifest.metadata.defaultSettings || ({})
@@ -16,45 +17,56 @@ ColumnLayout {
 
     property real editBackgroundOpacity: numberSetting("backgroundOpacity", 0.78)
     property real editCardOpacity: numberSetting("cardOpacity", 0.56)
-    property int editRefreshIntervalSeconds: Math.round(numberSetting("refreshIntervalSeconds", 120))
+    property int editRefreshIntervalSeconds: boundedIntSetting("refreshIntervalSeconds", 120, 30, 86400)
     property string editCodexHome: stringSetting("codexHome", "")
-    property bool editShowTaskBoard:
-        settings.showTaskBoard !== undefined ? settings.showTaskBoard :
-        defaults.showTaskBoard !== undefined ? defaults.showTaskBoard :
-        true
-    property bool editShowMessages:
-        settings.showMessages !== undefined ? settings.showMessages :
-        defaults.showMessages !== undefined ? defaults.showMessages :
-        true
-    property int editTaskWindowDays:
-        settings.taskWindowDays !== undefined ? Math.max(1, Math.min(30, parseInt(settings.taskWindowDays))) :
-        defaults.taskWindowDays !== undefined ? Math.max(1, Math.min(30, parseInt(defaults.taskWindowDays))) :
-        1
-    property string editThemeMode:
-        settings.themeMode !== undefined ? String(settings.themeMode) :
-        defaults.themeMode !== undefined ? String(defaults.themeMode) :
-        "system"
-    property string editLanguage:
-        settings.language !== undefined ? String(settings.language) :
-        defaults.language !== undefined ? String(defaults.language) :
-        "zh"
+    property bool editShowTaskBoard: boolSetting("showTaskBoard", true)
+    property bool editShowMessages: boolSetting("showMessages", true)
+    property int editTaskWindowDays: boundedIntSetting("taskWindowDays", 1, 1, 30)
+    property string editThemeMode: stringSetting("themeMode", "system")
+    property string editLanguage: stringSetting("language", "zh")
 
     spacing: Style.marginL
 
-    function numberSetting(name, fallback) {
+    function clamp(value, low, high) {
+        return Math.max(low, Math.min(high, Number(value)));
+    }
+
+    function finiteNumber(value, fallback) {
+        var numeric = Number(value);
+        return isFinite(numeric) ? numeric : Number(fallback);
+    }
+
+    function settingValue(name, fallback) {
         if (settings[name] !== undefined && settings[name] !== null)
-            return Number(settings[name]);
+            return settings[name];
         if (defaults[name] !== undefined && defaults[name] !== null)
-            return Number(defaults[name]);
+            return defaults[name];
         return fallback;
     }
 
+    function boolSetting(name, fallback) {
+        return settingValue(name, fallback);
+    }
+
+    function numberSetting(name, fallback) {
+        return finiteNumber(settingValue(name, fallback), fallback);
+    }
+
     function stringSetting(name, fallback) {
-        if (settings[name] !== undefined && settings[name] !== null)
-            return String(settings[name]);
-        if (defaults[name] !== undefined && defaults[name] !== null)
-            return String(defaults[name]);
-        return fallback;
+        return String(settingValue(name, fallback));
+    }
+
+    function boundedIntSetting(name, fallback, low, high) {
+        return Math.round(clamp(numberSetting(name, fallback), low, high));
+    }
+
+    function boundedIntValue(value, fallback, low, high) {
+        return Math.round(clamp(finiteNumber(value, fallback), low, high));
+    }
+
+    function scheduleSave() {
+        if (root.saveReady)
+            saveTimer.restart();
     }
 
     function saveSettings() {
@@ -71,6 +83,25 @@ ColumnLayout {
         pluginApi.pluginSettings.themeMode = root.editThemeMode;
         pluginApi.pluginSettings.language = root.editLanguage;
         pluginApi.saveSettings();
+    }
+
+    onEditBackgroundOpacityChanged: scheduleSave()
+    onEditCardOpacityChanged: scheduleSave()
+    onEditRefreshIntervalSecondsChanged: scheduleSave()
+    onEditCodexHomeChanged: scheduleSave()
+    onEditShowTaskBoardChanged: scheduleSave()
+    onEditShowMessagesChanged: scheduleSave()
+    onEditTaskWindowDaysChanged: scheduleSave()
+    onEditThemeModeChanged: scheduleSave()
+    onEditLanguageChanged: scheduleSave()
+
+    Component.onCompleted: saveReady = true
+
+    Timer {
+        id: saveTimer
+        interval: 180
+        repeat: false
+        onTriggered: root.saveSettings()
     }
 
     NComboBox {
@@ -143,7 +174,7 @@ ColumnLayout {
         description: "单位为秒，最小有效值为 30。"
         placeholderText: "120"
         text: String(root.editRefreshIntervalSeconds)
-        onTextChanged: root.editRefreshIntervalSeconds = Math.max(30, parseInt(text || "120"))
+        onTextChanged: root.editRefreshIntervalSeconds = root.boundedIntValue(parseInt(text || "120"), 120, 30, 86400)
     }
 
     NTextInput {
@@ -166,7 +197,7 @@ ColumnLayout {
             { "key": "30", "name": "近 30 天" }
         ]
         currentKey: String(root.editTaskWindowDays)
-        onSelected: key => root.editTaskWindowDays = Math.max(1, Math.min(30, parseInt(key)))
+        onSelected: key => root.editTaskWindowDays = root.boundedIntValue(parseInt(key), 1, 1, 30)
     }
 
     NToggle {

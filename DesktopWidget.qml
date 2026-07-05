@@ -15,7 +15,7 @@ DraggableDesktopWidget {
     showBackground: false
 
     property var pluginApi: null
-    property var snapshot: ({ "messages": ["正在读取 codexU 数据"] })
+    property var snapshot: ({ "messages": ["正在读取 CodexUsage 数据"] })
     property bool loading: false
     property string errorText: ""
 
@@ -47,7 +47,7 @@ DraggableDesktopWidget {
     readonly property color textColor: root.useDarkPalette ? "#f5f7fb" : "#171b24"
     readonly property color mutedTextColor: root.useDarkPalette ? "#a8afbf" : "#626b7f"
     readonly property color outlineColor: root.useDarkPalette ? "#636b7c" : "#b8c1d1"
-    readonly property string providerCommand: Qt.resolvedUrl("scripts/codexu-json").toString().replace("file://", "")
+    readonly property string providerCommand: Qt.resolvedUrl("scripts/codexusage-json").toString().replace("file://", "")
 
     readonly property real baseWidth: 820
     readonly property real baseHeight: root.showTaskBoard ? 800 : 420
@@ -68,6 +68,53 @@ DraggableDesktopWidget {
     readonly property color statusNeutral: "#98989d"
     readonly property color trackColor: Qt.alpha(root.mutedTextColor, 0.18)
     readonly property var taskColumnModel: root.taskColumns()
+    readonly property var readerMessage: ({
+        "ReadingCodexUsage": {
+            "texts": ["正在读取 CodexUsage 数据", "Reading CodexUsage data"],
+            "matchText": "正在读取 CodexUsage 数据",
+            "exact": true
+        },
+        "CodexMissing": {
+            "texts": ["未找到 codex", "Codex executable not found"],
+            "matchText": "未找到 codex",
+            "exact": false
+        },
+        "AppServerStartFailed": {
+            "texts": ["app-server 启动失败", "Failed to start app-server"],
+            "matchText": "app-server 启动失败",
+            "exact": false
+        },
+        "AppServerTimedOut": {
+            "texts": ["app-server 响应超时", "app-server response timed out"],
+            "matchText": "app-server 响应超时",
+            "exact": false
+        },
+        "StateDatabaseMissing": {
+            "texts": ["未找到 Codex state_5.sqlite", "Codex state_5.sqlite not found"],
+            "matchText": "未找到 Codex state_5.sqlite",
+            "exact": false
+        },
+        "SQLiteQueryFailed": {
+            "texts": ["SQLite 查询失败", "SQLite query failed"],
+            "matchText": "SQLite 查询失败",
+            "exact": false
+        },
+        "SessionLogsMissing": {
+            "texts": ["未找到 Codex session 日志", "Codex session logs not found"],
+            "matchText": "未找到 Codex session 日志",
+            "exact": false
+        },
+        "TokenEventsMissing": {
+            "texts": ["未找到 Codex token_count 事件", "Codex token_count events not found"],
+            "matchText": "未找到 Codex token_count 事件",
+            "exact": false
+        },
+        "TaskBoardDatabaseMissing": {
+            "texts": ["任务看板未找到 SQLite 数据源", "Task board SQLite data source not found"],
+            "matchText": "任务看板未找到 SQLite 数据源",
+            "exact": false
+        }
+    })
 
     readonly property real minScaleWidth: 520
     readonly property real minScaleHeight: 320
@@ -85,28 +132,36 @@ DraggableDesktopWidget {
         return root.useChinese ? zhText : enText;
     }
 
-    function boolSetting(name, fallback) {
-        if (root.pluginSettings[name] !== undefined)
+    function settingValue(name) {
+        if (root.pluginSettings[name] !== undefined && root.pluginSettings[name] !== null)
             return root.pluginSettings[name];
-        if (root.defaultSettings[name] !== undefined)
+        if (root.defaultSettings[name] !== undefined && root.defaultSettings[name] !== null)
             return root.defaultSettings[name];
+        return undefined;
+    }
+
+    function boolSetting(name, fallback) {
+        var value = root.settingValue(name);
+        if (value !== undefined)
+            return value;
         return fallback;
     }
 
     function stringSetting(name, fallback) {
-        if (root.pluginSettings[name] !== undefined && String(root.pluginSettings[name]).length > 0)
-            return String(root.pluginSettings[name]);
-        if (root.defaultSettings[name] !== undefined && String(root.defaultSettings[name]).length > 0)
-            return String(root.defaultSettings[name]);
+        var value = root.settingValue(name);
+        if (value !== undefined && String(value).length > 0)
+            return String(value);
         return fallback;
     }
 
+    function finiteNumber(value, fallback) {
+        var numeric = Number(value);
+        return isFinite(numeric) ? numeric : Number(fallback);
+    }
+
     function numberSetting(name, fallback) {
-        if (root.pluginSettings[name] !== undefined && root.pluginSettings[name] !== null)
-            return Number(root.pluginSettings[name]);
-        if (root.defaultSettings[name] !== undefined && root.defaultSettings[name] !== null)
-            return Number(root.defaultSettings[name]);
-        return fallback;
+        var value = root.settingValue(name);
+        return value !== undefined ? root.finiteNumber(value, fallback) : fallback;
     }
 
     function intSetting(name, fallback) {
@@ -163,6 +218,19 @@ DraggableDesktopWidget {
         if (value >= 1000)
             return "$" + Math.round(value).toLocaleString();
         return "$" + Number(value).toFixed(2);
+    }
+
+    function formatCompactUSD(value) {
+        if (value === undefined || value === null)
+            return "--";
+        var absValue = Math.abs(Number(value));
+        if (absValue >= 1000000)
+            return "$" + (Number(value) / 1000000).toFixed(1) + "M";
+        if (absValue >= 10000)
+            return "$" + (Number(value) / 1000).toFixed(1) + "K";
+        if (absValue >= 1000)
+            return "$" + Math.round(Number(value)).toString();
+        return "$" + Math.round(Number(value)).toString();
     }
 
     function localUsage() {
@@ -231,27 +299,143 @@ DraggableDesktopWidget {
             .replace("每小时", "Hourly");
     }
 
+    function runtimeMessages() {
+        var messages = [];
+        if (snapshot && snapshot.messages && snapshot.messages.length) {
+            for (var index = 0; index < snapshot.messages.length; index += 1)
+                messages.push(String(snapshot.messages[index]));
+        }
+        if (errorText.length > 0 && messages.indexOf(errorText) < 0)
+            messages.push(errorText);
+        return messages;
+    }
+
+    function runtimeMessageContains(fragment) {
+        var messages = root.runtimeMessages();
+        for (var index = 0; index < messages.length; index += 1) {
+            if (messages[index].indexOf(fragment) >= 0)
+                return true;
+        }
+        return false;
+    }
+
+    function matchesReaderMessage(entry, message) {
+        return !!entry && !!message
+            && ((entry.exact && message === entry.matchText) || (!entry.exact && message.indexOf(entry.matchText) >= 0));
+    }
+
+    function readerMessageKeyFor(message) {
+        if (!message)
+            return "";
+        for (var key in root.readerMessage) {
+            if (root.matchesReaderMessage(root.readerMessage[key], message))
+                return key;
+        }
+        return "";
+    }
+
+    function hasRuntimeMessage(entry) {
+        var messages = root.runtimeMessages();
+        for (var index = 0; index < messages.length; index += 1) {
+            if (root.matchesReaderMessage(entry, messages[index]))
+                return true;
+        }
+        return false;
+    }
+
+    function localizedReaderMessageByKey(messageKey, fallback) {
+        var entry = root.readerMessage[messageKey];
+        if (!entry || !entry.texts)
+            return fallback || "";
+        return root.useChinese ? entry.texts[0] : entry.texts[1];
+    }
+
+    function shouldShowEnvironmentChecklist() {
+        var messages = root.runtimeMessages();
+        if (root.hasRuntimeMessage(root.readerMessage.ReadingCodexUsage))
+            return false;
+        return (messages.length > 0 && (!root.snapshot.primary || !root.snapshot.local))
+            || !root.snapshot.account
+            || !root.snapshot.local;
+    }
+
+    function environmentDiagnostics() {
+        var items = [];
+
+        if (!root.snapshot.primary || !root.snapshot.account) {
+            if (root.hasRuntimeMessage(root.readerMessage.CodexMissing)) {
+                items.push({
+                    "id": "codex-missing",
+                    "title": root.tr("未找到 Codex", "Codex not found"),
+                    "detail": root.tr("请先安装 Codex，或确认 codex CLI 位于可执行路径中。", "Install Codex first, or make sure the codex CLI is available in PATH."),
+                    "symbol": "?",
+                    "tint": root.statusWarning
+                });
+            } else if (
+                root.hasRuntimeMessage(root.readerMessage.AppServerStartFailed)
+                || root.hasRuntimeMessage(root.readerMessage.AppServerTimedOut)
+                || root.runtimeMessageContains("app-server")
+            ) {
+                items.push({
+                    "id": "app-server",
+                    "title": root.tr("Codex 账户接口暂不可用", "Codex account API unavailable"),
+                    "detail": root.tr("确认 Codex 已登录后点击刷新；本机 token 统计仍会继续显示。", "Make sure Codex is signed in, then refresh. Local token stats will still be shown."),
+                    "symbol": "!",
+                    "tint": root.statusWarning
+                });
+            } else {
+                items.push({
+                    "id": "quota-unavailable",
+                    "title": root.tr("账户额度读取中", "Reading account quota"),
+                    "detail": root.tr("如果长时间无数据，请确认 Codex 已安装并完成登录。", "If data does not appear, make sure Codex is installed and signed in."),
+                    "symbol": "i",
+                    "tint": root.statusInfo
+                });
+            }
+        }
+
+        if (!root.snapshot.local) {
+            if (root.hasRuntimeMessage(root.readerMessage.StateDatabaseMissing)) {
+                items.push({
+                    "id": "sqlite-db",
+                    "title": root.tr("未找到本机 Codex 统计库", "Local Codex database not found"),
+                    "detail": root.tr("打开 Codex 并至少完成一次会话后，再回到小组件点击刷新。", "Open Codex and complete at least one session, then refresh this widget."),
+                    "symbol": "?",
+                    "tint": root.statusWarning
+                });
+            } else {
+                items.push({
+                    "id": "local-usage",
+                    "title": root.tr("本机统计暂不可用", "Local stats unavailable"),
+                    "detail": root.tr("本机 token 和任务看板依赖 ~/.codex 的本地状态文件。", "Local tokens and the task board depend on Codex state files under ~/.codex."),
+                    "symbol": "i",
+                    "tint": root.statusInfo
+                });
+            }
+        }
+
+        if (items.length === 0) {
+            var runtime = root.runtimeMessages();
+            for (var index = 0; index < Math.min(3, runtime.length); index += 1) {
+                items.push({
+                    "id": "message-" + String(index),
+                    "title": root.tr("运行提示", "Runtime note"),
+                    "detail": root.localizedReaderMessage(runtime[index]),
+                    "symbol": "i",
+                    "tint": root.statusInfo
+                });
+            }
+        }
+
+        return items;
+    }
+
     function localizedReaderMessage(message) {
         if (root.useChinese || !message)
             return message || "";
-        if (message === "正在读取 codexU 数据")
-            return "Reading codexU data";
-        if (message.indexOf("未找到 codex") >= 0)
-            return "Codex executable not found";
-        if (message.indexOf("app-server 启动失败") >= 0)
-            return "Failed to start app-server";
-        if (message.indexOf("app-server 响应超时") >= 0)
-            return "app-server response timed out";
-        if (message.indexOf("未找到 Codex state_5.sqlite") >= 0)
-            return "Codex state_5.sqlite not found";
-        if (message.indexOf("SQLite 查询失败") >= 0)
-            return "SQLite query failed";
-        if (message.indexOf("未找到 Codex session 日志") >= 0)
-            return "Codex session logs not found";
-        if (message.indexOf("未找到 Codex token_count 事件") >= 0)
-            return "Codex token_count events not found";
-        if (message.indexOf("任务看板未找到 SQLite 数据源") >= 0)
-            return "Task board SQLite data source not found";
+        var messageKey = root.readerMessageKeyFor(message);
+        if (messageKey.length > 0)
+            return root.localizedReaderMessageByKey(messageKey, message);
         return message.replace("未知错误", "Unknown error");
     }
 
@@ -289,14 +473,28 @@ DraggableDesktopWidget {
         return root.statusWarning;
     }
 
-    function woolFraction(cost) {
-        var clamped = Math.max(0, Math.min(Number(cost || 0), 46500));
+    function woolScaleMaxValue(baselineValue) {
+        var projection = root.localUsage().valueProjection || {};
+        var monthUsage = root.localUsage().detailedUsage && root.localUsage().detailedUsage.month
+            ? Number(root.localUsage().detailedUsage.month.estimatedCostUSD || 0)
+            : 0;
+        return Math.max(Number(projection.projectedUSD || 0), monthUsage, Number(baselineValue || 0));
+    }
+
+    function woolFraction(cost, scaleMaxValue) {
         var ceiling = 200;
         var band = 0.28;
+        var maxValue = Math.max(Number(scaleMaxValue || 0), ceiling);
+        var clamped = Math.max(0, Math.min(Number(cost || 0), maxValue));
         if (clamped <= ceiling)
             return band * (clamped / ceiling);
-        var remaining = Math.max(46500 - ceiling, 1);
+        var remaining = Math.max(maxValue - ceiling, 1);
         return band + (1 - band) * ((clamped - ceiling) / remaining);
+    }
+
+    function woolMarkerX(amount, markerWidth, barWidth, scaleMaxValue) {
+        var center = Number(barWidth || 0) * root.woolFraction(amount, scaleMaxValue);
+        return clamp(center - Number(markerWidth || 0) / 2, 0, Math.max(Number(barWidth || 0) - Number(markerWidth || 0), 0));
     }
 
     function chipIcon(chip) {
@@ -339,9 +537,9 @@ DraggableDesktopWidget {
     function providerCommandParts() {
         var env = [];
         if (configuredCodexHome.length > 0)
-            env.push("CODEXU_CODEX_HOME=" + configuredCodexHome);
+            env.push("CODEXUSAGE_CODEX_HOME=" + configuredCodexHome);
         if (taskWindowDays > 1)
-            env.push("CODEXU_TASK_WINDOW_DAYS=" + String(taskWindowDays));
+            env.push("CODEXUSAGE_TASK_WINDOW_DAYS=" + String(taskWindowDays));
         if (env.length > 0)
             return ["env"].concat(env).concat([providerCommand]);
         return [providerCommand];
@@ -458,14 +656,14 @@ DraggableDesktopWidget {
             Image {
                 Layout.preferredWidth: dp(34)
                 Layout.preferredHeight: dp(34)
-                source: Qt.resolvedUrl("../Resources/codexU-icon.png")
+                source: Qt.resolvedUrl("../Resources/codexusage-icon.png")
                 fillMode: Image.PreserveAspectFit
                 smooth: true
                 visible: status === Image.Ready
             }
 
             NText {
-                text: root.tr("Codex 用量统计", "Codex Usage")
+                text: root.tr("CodexUsage 用量统计", "CodexUsage")
                 color: root.textColor
                 font.pointSize: fp(22)
                 font.bold: true
@@ -494,6 +692,88 @@ DraggableDesktopWidget {
                 text: "↻"
                 spinning: root.loading
                 onClicked: root.refresh()
+            }
+        }
+
+        GlassPanel {
+            visible: root.shouldShowEnvironmentChecklist()
+            Layout.fillWidth: true
+            Layout.preferredHeight: visible ? implicitHeight : 0
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: dp(12)
+                spacing: dp(10)
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    NText {
+                        text: root.tr("环境检查", "Environment")
+                        color: root.textColor
+                        font.pointSize: fp(12)
+                        font.bold: true
+                        applyUiScale: false
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    NText {
+                        text: root.tr("首次使用", "First run")
+                        color: root.mutedTextColor
+                        font.pointSize: fp(10)
+                        font.bold: true
+                        applyUiScale: false
+                    }
+                }
+
+                Repeater {
+                    model: root.environmentDiagnostics()
+
+                    RowLayout {
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: dp(9)
+
+                        Rectangle {
+                            Layout.preferredWidth: dp(18)
+                            Layout.preferredHeight: dp(18)
+                            radius: dp(6)
+                            color: Qt.alpha(modelData.tint, 0.16)
+
+                            NText {
+                                anchors.centerIn: parent
+                                text: modelData.symbol
+                                color: modelData.tint
+                                font.pointSize: fp(11)
+                                font.bold: true
+                                applyUiScale: false
+                            }
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: dp(2)
+
+                            NText {
+                                text: modelData.title
+                                color: root.textColor
+                                font.pointSize: fp(11)
+                                font.bold: true
+                                applyUiScale: false
+                            }
+
+                            NText {
+                                text: modelData.detail
+                                color: root.mutedTextColor
+                                font.pointSize: fp(10)
+                                wrapMode: Text.Wrap
+                                applyUiScale: false
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -728,6 +1008,13 @@ DraggableDesktopWidget {
     component QuotaOverview: Item {
         property var primary
         property var secondary
+        readonly property bool quotaAvailable: !!primary && !!secondary
+        readonly property bool quotaLoading:
+            !quotaAvailable && root.hasRuntimeMessage(root.readerMessage.ReadingCodexUsage)
+        readonly property string quotaStateText:
+            quotaAvailable ? "" :
+            quotaLoading ? root.tr("额度读取中", "Reading quota") :
+            root.tr("额度暂不可用", "Quota unavailable")
 
         ColumnLayout {
             anchors.fill: parent
@@ -782,6 +1069,7 @@ DraggableDesktopWidget {
                 ColumnLayout {
                     anchors.centerIn: parent
                     spacing: dp(2)
+                    visible: quotaAvailable
 
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
@@ -794,6 +1082,30 @@ DraggableDesktopWidget {
                         spacing: dp(4)
                         NText { text: "7d"; color: root.brandSecondary; font.pointSize: fp(10); font.bold: true; applyUiScale: false; Layout.alignment: Qt.AlignVCenter }
                         NText { text: root.formatPercent(secondary && secondary.remainingPercent); color: root.textColor; font.pointSize: fp(15); font.bold: true; applyUiScale: false; Layout.alignment: Qt.AlignVCenter }
+                    }
+                }
+
+                ColumnLayout {
+                    anchors.centerIn: parent
+                    spacing: dp(4)
+                    visible: !quotaAvailable
+
+                    NText {
+                        text: root.tr("5h / 7d", "5h / 7d")
+                        color: root.mutedTextColor
+                        font.pointSize: fp(10)
+                        font.bold: true
+                        applyUiScale: false
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+
+                    NText {
+                        text: quotaStateText
+                        color: root.textColor
+                        font.pointSize: fp(13)
+                        font.bold: true
+                        applyUiScale: false
+                        Layout.alignment: Qt.AlignHCenter
                     }
                 }
 
@@ -1018,6 +1330,11 @@ DraggableDesktopWidget {
         property var usage
         readonly property real currentCost: Number((usage && usage.estimatedCostUSD) || 0)
         readonly property color currentAccent: root.woolAccent(currentCost)
+        readonly property real pro200Amount: 200
+        readonly property var valueProjection: root.localUsage().valueProjection || ({})
+        readonly property real projectedMonthAmount: Number(valueProjection.projectedUSD || 0)
+        readonly property bool projectionAvailable: projectedMonthAmount > 0
+        readonly property real scaleMaxValue: root.woolScaleMaxValue(woolCardRoot.pro200Amount)
         readonly property var milestones: [
             { "title": "Plus", "amount": 20, "color": root.statusInfo },
             { "title": "Pro100", "amount": 100, "color": root.brandSecondary },
@@ -1032,7 +1349,7 @@ DraggableDesktopWidget {
             RowLayout {
                 Layout.fillWidth: true
                 NText {
-                    text: (currentCost >= 20 ? "↗" : "◎") + "  " + root.tr("羊毛进度", "Value Progress")
+                    text: "◎  " + root.tr("本月用量", "Value Progress")
                     color: root.textColor
                     font.pointSize: fp(12)
                     font.bold: true
@@ -1043,13 +1360,6 @@ DraggableDesktopWidget {
                     text: root.formatUSD(usage && usage.estimatedCostUSD)
                     color: root.textColor
                     font.pointSize: fp(16)
-                    font.bold: true
-                    applyUiScale: false
-                }
-                NText {
-                    text: "/ $46.5K"
-                    color: root.mutedTextColor
-                    font.pointSize: fp(10)
                     font.bold: true
                     applyUiScale: false
                 }
@@ -1071,7 +1381,7 @@ DraggableDesktopWidget {
                 Rectangle {
                     anchors.verticalCenter: parent.verticalCenter
                     anchors.left: parent.left
-                    width: currentCost > 0 ? Math.max(dp(5), parent.width * root.woolFraction(currentCost)) : 0
+                    width: currentCost > 0 ? Math.max(dp(5), parent.width * root.woolFraction(currentCost, woolCardRoot.scaleMaxValue)) : 0
                     height: dp(10)
                     radius: height / 2
                     color: currentAccent
@@ -1082,7 +1392,7 @@ DraggableDesktopWidget {
                     delegate: Rectangle {
                         required property var modelData
                         anchors.verticalCenter: parent.verticalCenter
-                        x: woolBar.width * root.woolFraction(modelData.amount) - width / 2
+                        x: root.woolMarkerX(modelData.amount, width, woolBar.width, woolCardRoot.scaleMaxValue)
                         width: dp(7)
                         height: width
                         radius: width / 2
@@ -1090,6 +1400,19 @@ DraggableDesktopWidget {
                         border.color: root.surfaceColor
                         border.width: 1
                     }
+                }
+
+                Rectangle {
+                    visible: woolCardRoot.projectionAvailable
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: root.woolMarkerX(woolCardRoot.projectedMonthAmount, width, woolBar.width, woolCardRoot.scaleMaxValue)
+                    width: dp(9)
+                    height: width
+                    radius: width / 2
+                    color: root.alphaColor(root.panelColor, Math.max(root.cardOpacity, 0.86))
+                    border.color: root.brandHighlight
+                    border.width: 2
+                    z: 1
                 }
             }
 
@@ -1099,6 +1422,13 @@ DraggableDesktopWidget {
                 LegendDot { colorDot: root.statusInfo; text: "Plus" }
                 LegendDot { colorDot: root.brandSecondary; text: "Pro100" }
                 LegendDot { colorDot: root.brandPrimaryLight; text: "Pro200" }
+                LegendDot {
+                    visible: woolCardRoot.projectionAvailable
+                    colorDot: root.alphaColor(root.panelColor, Math.max(root.cardOpacity, 0.86))
+                    borderColor: root.brandHighlight
+                    borderWidth: 2
+                    text: root.tr("本月预估", "Month estimate") + " (" + root.formatUSD(woolCardRoot.projectedMonthAmount) + ")"
+                }
             }
         }
     }
@@ -1106,6 +1436,8 @@ DraggableDesktopWidget {
     component LegendDot: RowLayout {
         id: legendDotRoot
         property color colorDot
+        property color borderColor: "transparent"
+        property int borderWidth: 0
         property string text
 
         spacing: dp(5)
@@ -1115,6 +1447,8 @@ DraggableDesktopWidget {
             Layout.preferredHeight: dp(8)
             radius: width / 2
             color: colorDot
+            border.color: legendDotRoot.borderColor
+            border.width: legendDotRoot.borderWidth
         }
         NText { text: legendDotRoot.text; color: root.mutedTextColor; font.pointSize: fp(Style.fontSizeXS); font.bold: true; applyUiScale: false }
     }
